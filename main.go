@@ -9,21 +9,36 @@ import (
 	"time"
 )
 
+type Status int
+
 const (
-	Todo = iota
+	Todo Status = iota
 	InProgress
 	Done
 )
 
+func (s Status) String() string {
+	switch s {
+	case Todo:
+		return "Todo"
+	case InProgress:
+		return "In Progress"
+	case Done:
+		return "Done"
+	default:
+		return "Not Valid"
+	}
+}
+
 type Task struct {
 	ID        int       `json:"id"`
 	Desc      string    `json:"description"`
-	Stauts    int       `json:"status"`
+	Status    Status    `json:"status"`
 	CreatedAt time.Time `json:"createdAt"`
 	UpdatedAt time.Time `json:"updatedAt"`
 }
 
-func TasksToJsonFile(tasks []Task, filename string) error {
+func TasksToJSONFile(tasks []Task, filename string) error {
 	f, err := os.Create(filename)
 	if err != nil {
 		return err
@@ -36,13 +51,10 @@ func TasksToJsonFile(tasks []Task, filename string) error {
 	}
 
 	_, err = f.Write(jsonData)
-	if err != nil {
-		return err
-	}
-	return nil
+	return err
 }
 
-func TasksFromJsonFile(tasks *[]Task, filename string) error {
+func TasksFromJSONFile(tasks *[]Task, filename string) error {
 	fileData, err := os.ReadFile(filename)
 	if err != nil {
 		return err
@@ -52,24 +64,46 @@ func TasksFromJsonFile(tasks *[]Task, filename string) error {
 	return err // Nil if everything goes good
 }
 
-func FindTaskByID(ID int, tasks []Task) (int, error) { // Returns the task index in the tasks slice
-	for i, t := range tasks {
-		if t.ID == ID {
-			return i, nil
-		}
+func GetTaskIdx(tasks []Task) int {
+	taskID, err := strconv.Atoi(os.Args[2])
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
 	}
-	return 0, fmt.Errorf("can't find task with ID %d", ID)
+
+	taskIdx, err := func() (int, error) {
+		for i, t := range tasks {
+			if t.ID == taskID {
+				return i, nil
+			}
+		}
+		return 0, fmt.Errorf("can't find task with ID %d", taskID)
+	}()
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	return taskIdx
+}
+
+func (t Task) Print() {
+	fmt.Println(`"` + t.Desc + `"`)
+	fmt.Println("ID:", t.ID)
+	fmt.Println("Created:", t.CreatedAt.Format("2006-01-02 15:04"))
+	fmt.Println("Last Updated:", t.UpdatedAt.Format("2006-01-02 15:04"))
+	fmt.Println() // Empty line
 }
 
 func main() {
 	tasks := []Task{}
-	err := TasksFromJsonFile(&tasks, "tasks.json")
-	if err != nil {
+	err := TasksFromJSONFile(&tasks, "tasks.json")
+	if err != nil && !os.IsNotExist(err) {
 		fmt.Println(err)
-		// No need to exit
+		os.Exit(1)
 	}
 	defer func() {
-		err := TasksToJsonFile(tasks, "tasks.json")
+		err := TasksToJSONFile(tasks, "tasks.json")
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -77,20 +111,13 @@ func main() {
 	}()
 
 	ID := func() int {
-		IDUsed := func(ID int) bool {
-			for _, t := range tasks {
-				if ID == t.ID {
-					return true
-				}
+		maxID := 0
+		for _, t := range tasks {
+			if t.ID > maxID {
+				maxID = t.ID
 			}
-			return false
 		}
-
-		IDCount := 1
-		for IDUsed(IDCount) { // While IDCount is used, increment IDCount
-			IDCount++
-		}
-		return IDCount
+		return maxID + 1
 	}
 
 	if len(os.Args) == 1 {
@@ -107,7 +134,7 @@ func main() {
 
 		desc := strings.Join(os.Args[2:], " ")
 
-		tasks = append(tasks, Task{ID: ID(), Desc: desc, Stauts: Todo, CreatedAt: time.Now(), UpdatedAt: time.Now()})
+		tasks = append(tasks, Task{ID: ID(), Desc: desc, Status: Todo, CreatedAt: time.Now(), UpdatedAt: time.Now()})
 
 	case "update":
 		if len(os.Args) <= 3 {
@@ -117,19 +144,7 @@ func main() {
 
 		desc := strings.Join(os.Args[3:], " ")
 
-		taskID, err := strconv.Atoi(os.Args[2])
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		taskIdx, err := FindTaskByID(taskID, tasks)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		taskToUpdate := &tasks[taskIdx]
+		taskToUpdate := &tasks[GetTaskIdx(tasks)]
 		taskToUpdate.Desc = desc
 		taskToUpdate.UpdatedAt = time.Now()
 
@@ -139,18 +154,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		taskID, err := strconv.Atoi(os.Args[2])
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		taskIdx, err := FindTaskByID(taskID, tasks)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
+		taskIdx := GetTaskIdx(tasks)
 		tasks = append(tasks[:taskIdx], tasks[taskIdx+1:]...)
 
 	case "mark-in-progress":
@@ -159,19 +163,7 @@ func main() {
 			os.Exit(1)
 		}
 
-		taskID, err := strconv.Atoi(os.Args[2])
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		taskIdx, err := FindTaskByID(taskID, tasks)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		tasks[taskIdx].Stauts = InProgress
+		tasks[GetTaskIdx(tasks)].Status = InProgress
 
 	case "mark-done":
 		if len(os.Args) != 3 {
@@ -179,41 +171,16 @@ func main() {
 			os.Exit(1)
 		}
 
-		taskID, err := strconv.Atoi(os.Args[2])
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		taskIdx, err := FindTaskByID(taskID, tasks)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-
-		tasks[taskIdx].Stauts = Done
+		tasks[GetTaskIdx(tasks)].Status = Done
 
 	case "list":
 		if len(os.Args) == 2 {
 			for _, t := range tasks {
 				fmt.Println(`"` + t.Desc + `"`)
 				fmt.Println("ID:", t.ID)
-
-				fmt.Printf("Stauts: ")
-				switch t.Stauts {
-				case Todo:
-					fmt.Println("Todo")
-				case InProgress:
-					fmt.Println("In Progress")
-				case Done:
-					fmt.Println("Done")
-				default:
-					fmt.Println("Something went wrong")
-					os.Exit(1)
-				}
-
-				fmt.Println("Created:", t.CreatedAt.Format("15:04"))
-				fmt.Println("Last Updated:", t.UpdatedAt.Format("15:04"))
+				fmt.Println("Status:", t.Status.String())
+				fmt.Println("Created:", t.CreatedAt.Format("2006-01-02 15:04"))
+				fmt.Println("Last Updated:", t.UpdatedAt.Format("2006-01-02 15:04"))
 				fmt.Println() // Empty line
 			}
 		}
@@ -222,38 +189,26 @@ func main() {
 			switch os.Args[2] {
 			case "todo":
 				for _, t := range tasks {
-					if t.Stauts != Todo {
+					if t.Status != Todo {
 						continue
 					}
-					fmt.Println(`"` + t.Desc + `"`)
-					fmt.Println("ID:", t.ID)
-					fmt.Println("Created:", t.CreatedAt.Format("15:04"))
-					fmt.Println("Last Updated:", t.UpdatedAt.Format("15:04"))
-					fmt.Println() // Empty line
+					t.Print()
 				}
 
 			case "done":
 				for _, t := range tasks {
-					if t.Stauts != Done {
+					if t.Status != Done {
 						continue
 					}
-					fmt.Println(`"` + t.Desc + `"`)
-					fmt.Println("ID:", t.ID)
-					fmt.Println("Created:", t.CreatedAt.Format("15:04"))
-					fmt.Println("Last Updated:", t.UpdatedAt.Format("15:04"))
-					fmt.Println() // Empty line
+					t.Print()
 				}
 
 			case "in-progress":
 				for _, t := range tasks {
-					if t.Stauts != InProgress {
+					if t.Status != InProgress {
 						continue
 					}
-					fmt.Println(`"` + t.Desc + `"`)
-					fmt.Println("ID:", t.ID)
-					fmt.Println("Created:", t.CreatedAt.Format("15:04"))
-					fmt.Println("Last Updated:", t.UpdatedAt.Format("15:04"))
-					fmt.Println() // Empty line
+					t.Print()
 				}
 			default:
 				fmt.Println("Not valid")
